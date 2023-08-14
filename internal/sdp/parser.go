@@ -2,8 +2,6 @@ package sdp
 
 import (
 	"bytes"
-
-	"github.com/indigo-web/utils/uf"
 )
 
 type Parser struct{}
@@ -12,25 +10,42 @@ func NewParser() Parser {
 	return Parser{}
 }
 
-func (Parser) Parse(data []byte) (desc Description, err error) {
-	session := Session{}
-	var value string
+func (p *Parser) Parse(data []byte) (desc Description, err error) {
+	desc.Session, data, err = p.parseSession(data)
+	if err != nil {
+		return desc, err
+	}
 
 	for len(data) > 0 {
+		var media Media
+		media, data, err = p.parseMedia(data)
+		if err != nil {
+			return desc, err
+		}
+
+		desc.Media = append(desc.Media, media)
+	}
+	
+	return desc, nil
+}
+
+func (p *Parser) parseSession(data []byte) (session Session, rest []byte, err error) {
+	for len(data) > 0 {
 		if len(data) < 2 {
-			return desc, ErrIncompleteData
+			return session, nil, ErrIncompleteData
 		}
 
 		if data[1] != '=' {
-			return desc, ErrBadSyntax
+			return session, nil, ErrBadSyntax
 		}
 
 		if data[0] == 'm' {
 			// media starts here
-			break
+			return session, data, nil
 		}
 
 		key := data[0]
+		var value string
 		value, data = parseValue(data[2:])
 
 		switch key {
@@ -39,7 +54,7 @@ func (Parser) Parse(data []byte) (desc Description, err error) {
 		case 'o':
 			session.Originator, err = session.Originator.Parse(value)
 			if err != nil {
-				return desc, err
+				return session, nil, err
 			}
 		case 's':
 			session.Name = value
@@ -54,56 +69,51 @@ func (Parser) Parse(data []byte) (desc Description, err error) {
 		case 'c':
 			connInfo, err := ConnectionInfo{}.Parse(value)
 			if err != nil {
-				return desc, err
+				return session, nil, err
 			}
 
 			session.ConnectionInfo = append(session.ConnectionInfo, connInfo)
 		case 'b':
 			bwInfo, err := Bandwidth{}.Parse(value)
 			if err != nil {
-				return desc, err
+				return session, nil, err
 			}
 
 			session.BandwidthInfo = append(session.BandwidthInfo, bwInfo)
 		case 'z':
 			session.TimeZoneAdjustments = append(session.TimeZoneAdjustments, value)
 		case 'k':
-			session.EncryptionKey, err = EncryptionKey{}.Parse(value)
+			session.EncryptionKey, err = session.EncryptionKey.Parse(value)
 			if err != nil {
-				return desc, err
+				return session, nil, err
 			}
 		case 'a':
 			session.Attributes = append(session.Attributes, Attribute{}.Parse(value))
 		default:
-			return desc, ErrUnrecognizedKey
+			return session, nil, ErrUnrecognizedKey
 		}
 	}
 
-	desc.Session = session
+	return session, data, nil
+}
 
-	if len(data) == 0 {
-		return desc, nil
-	}
-
-	var media Media
-
+func (p *Parser) parseMedia(data []byte) (media Media, rest []byte, err error) {
 	for len(data) > 0 {
 		if len(data) < 2 {
-			return desc, ErrIncompleteData
+			return media, nil, ErrIncompleteData
 		}
 
 		if data[1] != '=' {
-			return desc, ErrBadSyntax
+			return media, nil, ErrBadSyntax
 		}
 
 		if data[0] == 'm' && media.Name != "" {
 			// the next media block description has begun
-			desc.Media = append(desc.Media, media)
-			media = Media{}
-			continue
+			return media, data, nil
 		}
 
 		key := data[0]
+		var value string
 		value, data = parseValue(data[2:])
 
 		switch key {
@@ -114,7 +124,7 @@ func (Parser) Parse(data []byte) (desc Description, err error) {
 		case 'c':
 			connInfo, err := ConnectionInfo{}.Parse(value)
 			if err != nil {
-				return desc, err
+				return media, nil, err
 			}
 
 			media.ConnectionInfo = append(media.ConnectionInfo, connInfo)
@@ -125,13 +135,11 @@ func (Parser) Parse(data []byte) (desc Description, err error) {
 		case 'a':
 			media.Attributes = append(media.Attributes, value)
 		default:
-			return desc, ErrUnrecognizedKey
+			return media, nil, ErrUnrecognizedKey
 		}
 	}
 
-	desc.Media = append(desc.Media, media)
-
-	return desc, nil
+	return media, nil, nil
 }
 
 func parseValue(data []byte) (value string, rest []byte) {
@@ -145,5 +153,5 @@ func parseValue(data []byte) (value string, rest []byte) {
 		}
 	}
 
-	return uf.B2S(data), rest
+	return string(data), rest
 }
